@@ -1,7 +1,7 @@
 +++
 draft = false
 title = "Decimals in PHP 8 with Symfony and Doctrine"
-date = '2026-10-25'
+date = '2026-11-02'
 description = "PHP 8.4's BcMath\\Number finally gives exact decimals a real type: an immutable object with arithmetic operators that can travel intact from the database to the form, without ever becoming a float."
 tags = [
   "php",
@@ -20,9 +20,7 @@ A type is only useful if it reaches every layer. Doctrine can map a `DECIMAL` da
 and Symfony components are starting to accept it too. This article starts with why floats fail, then follows a
 `Number` through the database, the presentation layer and Symfony.
 
-## Part 1: The Root of the Problem
-
-To understand the solution, we must first understand the problem.
+## Part 1: The root of the problem
 
 ```php
 var_dump(0.1 + 0.2); // 0.30000000000000004
@@ -49,18 +47,16 @@ The logical answer would be `0.3`, but in computer science (and in PHP as well),
   repeating fractions when converted to radix 2. They have **no exact binary equivalent**, so the CPU stores the nearest
   representable value instead.
 - **Rounding error:**
-  Computers cannot store infinite sequences, they truncate the number, leading to precision loss. In other
-  words, since memory is finite, PHP must round them. When we add these 2 rounded values, the tiny errors combine and
-  become visible.
+  Memory is finite, so the CPU cannot store an infinite sequence. It rounds the number, and some precision is lost.
+  When we add two rounded values, the tiny errors combine and become visible.
 
 > [!NOTE]
-> The `PHP_FLOAT_DIG` const stores the number of decimal digits that can be rounded into a float and back without loss
-> of precision.
+> The `PHP_FLOAT_DIG` constant holds the number of decimal digits that can be rounded into a float and back without
+> loss of precision.
 
-PHP, like many languages, uses the **IEEE 754** standard for its `float` (and its alias `double`) type. This is the
-format in which almost all CPUs represent non-integer numbers. Although it is efficient due to fast hardware arithmetic,
-this format relies on binary representation.
-See what [the PHP documentation](https://www.php.net/manual/en/language.types.float.php) points out for us:
+PHP, like many languages, uses the **IEEE 754** standard for its `float` type (and its alias, `double`). Almost all CPUs
+use this format for non-integer numbers. The hardware does the arithmetic, so it is fast, but the format is binary.
+[The PHP documentation](https://www.php.net/manual/en/language.types.float.php) warns about this:
 
 > Floating point numbers have limited precision. Although it depends on the system, PHP typically uses the IEEE 754
 > double precision format, which will give a maximum relative error due to rounding in the order of `1.11e-16`. Non
@@ -95,9 +91,9 @@ printf("%.20f\n", 0.1 + 0.2); // 0.30000000000000004441
 > numbers.
 > \- [Wikipedia](https://en.wikipedia.org/wiki/Floating-point_arithmetic#Accuracy_problems)
 
-For general statistics, this might be negligible. However, **loss of precision can be critical for financial data,
-scientific calculations, or any domain requiring exactness**. Even if some numbers can be represented exactly by
-floating-point numbers, performing floating-point arithmetic may lead to [roundoff error](https://en.wikipedia.org/wiki/Round-off_error) in the final result.
+For general statistics, this error might not matter. **For financial data, scientific calculations, or any domain that
+needs exact results, it does.** Even when the inputs are exact floats, the arithmetic can still introduce
+[round-off error](https://en.wikipedia.org/wiki/Round-off_error) into the result.
 
 ### Floating-point error mitigation
 
@@ -107,7 +103,7 @@ floating-point numbers, performing floating-point arithmetic may lead to [roundo
 > and, at best, can only be managed.
 > \- [Wikipedia](https://en.wikipedia.org/wiki/Floating-point_error_mitigation)
 
-The most interesting techniques for us are those for reducing floating-point errors:
+Two of the mitigation techniques matter here:
 
 > **Variable-length arithmetic**
 >
@@ -141,24 +137,22 @@ by [IEEE 754-2008](https://en.wikipedia.org/wiki/IEEE_754-2008_revision).
 | Binary  | binary32/binary64              | GNU Multiple Precision (GMP) |
 | Decimal | decimal32/decimal64/decimal128 | BCMath                       |
 
-**The variable length alone is not a solution**, financial applications require the decimal number system.
+**Variable length alone is not a solution.** Financial applications need the decimal number system.
 [GMP](https://en.wikipedia.org/wiki/GNU_Multiple_Precision_Arithmetic_Library) is arbitrary-precision and fast, and...
 it will not help you with money, because it's still binary (and integer-only besides). "More digits" is a mitigation,
 not a fix.
 
 > [!WARNING]
-> Extra amount of precision is not a silver bullet: `1/3` doesn't become exact in decimal if you write more
-> digits, and `0.1` doesn't become exact in binary if you allocate more bits.
+> Extra precision does not fix the radix: `1/3` doesn't become exact in decimal if you write more digits, and `0.1`
+> doesn't become exact in binary if you allocate more bits.
 
-In practice, most floating-point systems use base-2, though base-10 (DFP) is also common.
-Unfortunately, still most hardware architectures do not support native base-10 arithmetic, so we have to use a software
-implementation to get this "power". **The trade-off here is performance for accuracy.** Although the DFP could be used
-as a library, still the [BCMath PHP extension](https://www.php.net/manual/en/book.bc.php) is a much more obvious and
-pragmatic choice.
+Most floating-point systems use base 2, and some use base 10 (DFP). Most hardware has no native base-10 arithmetic, so
+decimal math runs in software. **You trade performance for accuracy.** A DFP library would work, but in PHP the
+[BCMath extension](https://www.php.net/manual/en/book.bc.php) is the obvious, pragmatic choice.
 
 ### Fixed-point arithmetic
 
-Another possible approach could be to rely on **fixed-point arithmetic**:
+Another approach is **fixed-point arithmetic**:
 
 > In [computing](https://en.wikipedia.org/wiki/Computing), **fixed-point** is a method of representing
 > [fractional](https://en.wikipedia.org/wiki/Fraction_(mathematics)) (non-integer) numbers by storing a fixed number of
@@ -170,7 +164,7 @@ Another possible approach could be to rely on **fixed-point arithmetic**:
 > [floating-point representation](https://en.wikipedia.org/wiki/Floating-point_representation).
 > \- [Wikipedia](https://en.wikipedia.org/wiki/Fixed-point_arithmetic)
 
-For example, we’d represent `10.95` dollars as `1095` cents, while zero-decimal currencies like Japanese Yen remain
+For example, `10.95` dollars becomes `1095` cents. Amounts in zero-decimal currencies, such as the Japanese yen, stay
 unchanged.
 
 Here's a naive PHP implementation:
@@ -187,9 +181,9 @@ final readonly class Decimal
 ```
 
 Note that a PHP `int` is bounded by
-[`PHP_INT_MAX`](https://www.php.net/manual/en/reserved.constants.php#constant.php-int-max), which [raises entirely new
-problems](https://en.wikipedia.org/wiki/Integer_overflow); for this very reason, libraries that use minor units still
-reach for big number backends.
+[`PHP_INT_MAX`](https://www.php.net/manual/en/reserved.constants.php#constant.php-int-max), which brings
+[a new problem: overflow](https://en.wikipedia.org/wiki/Integer_overflow). For this reason, libraries that use minor
+units still reach for big number backends.
 
 > [!TIP]
 > Java's `BigDecimal` is this exact design, without the overflow. The
@@ -201,15 +195,15 @@ reach for big number backends.
 
 BCMath is PHP's binding to the algorithms of
 [`bc`, the "Basic Calculator"](https://en.wikipedia.org/wiki/Bc_(programming_language)) - an **arbitrary-precision**
-calculator language that has been a **POSIX** utility since the 1970s and was integrated into PHP as an C extension.
+calculator language that dates back to the 1970s and is part of **POSIX**. PHP ships it as a C extension.
 
 > [!NOTE]
-> ["Arbitrary precision"](https://en.wikipedia.org/wiki/Arbitrary-precision_arithmetic) means the numbers are not
-> limited by a fixed-length register, the number of digits is bounded only by available memory.
+> ["Arbitrary precision"](https://en.wikipedia.org/wiki/Arbitrary-precision_arithmetic) means a fixed-length register
+> does not limit the numbers. Only the available memory limits the number of digits.
 
 ### The old procedural API
 
-Until PHP 8.4, BCMath was purely procedural, forcing developers to write verbose code like this:
+Until PHP 8.4, BCMath was purely procedural, so the code looked like this:
 
 ```php
 $price    = '19.99';
@@ -221,14 +215,14 @@ $tax   = bcmul($net, $taxRate, 2);    // '16.19'
 $gross = bcadd($net, $tax, 2);        // '76.16'
 ```
 
-It works, but painful to read. Every value is a bare string with no type safety, and the scale argument has to be
-repeated on every call.
+It works, but it is painful to read. Every value is a bare string with no type safety, and you repeat the scale
+argument on every call.
 
-### PHP 8.4 introduces a major upgrade: `BcMath\Number`
+### PHP 8.4 turns the functions into an object: `BcMath\Number`
 
 [The "Support object type in BCMath" RFC](https://wiki.php.net/rfc/support_object_type_in_bcmath) by Saki Takamachi
 introduced [`BcMath\Number`](https://www.php.net/manual/en/class.bcmath-number.php) in 2024, which wraps that procedural
-functionality in an object. While PHP arrived late to the concept, `BcMath\Number` fits the standard definition of a
+functionality in an object. PHP arrived late, but `BcMath\Number` fits the standard definition of a
 **[Decimal Data Type](https://en.wikipedia.org/wiki/Decimal_data_type)**. Similar to Java's `java.math.BigDecimal` or
 Python's `decimal.Decimal`, it represents non-repeating decimal fractions (like `0.1` and `−1.17`) without rounding,
 and allows arithmetic calculations with them.
@@ -268,13 +262,13 @@ Four design decisions matter here:
 1. **It is OOP:** The procedural functions are wrapped in an object, so the number carries its own scale and behaviour
    instead of being an anonymous string passed around between global functions.
 2. **It is a [Value Object](https://martinfowler.com/bliki/ValueObject.html):** The class is `final readonly`. Every
-   operation returns a **new** instance, preventing
-   side effects. That is exactly what you want for money: two amounts of `19.99` are interchangeable, and no code path
-   can reach into your invoice and change its total from underneath you.
-3. **Values are stored as strings:** The `$value` is a `string`, not a `float`. Precision is preserved on construction,
-   on serialization, and on the way into and out of the database.
-4. **It supports operator overloading:** You can use operators directly on the objects - it can't be done in PHP
-   userland, the extension implements it at the engine level.
+   operation returns a **new** instance, so there are no side effects. That is exactly what you want for money: two
+   amounts of `19.99` are interchangeable, and no code path can reach into your invoice and change its total from
+   underneath you.
+3. **Values are stored as strings:** The `$value` is a `string`, not a `float`. Precision survives construction,
+   serialization, and the round trip to the database.
+4. **It supports operator overloading:** You can use operators directly on the objects. Userland PHP classes can't do
+   this - the extension implements it in the engine.
 
 ```php
 use BcMath\Number;
@@ -293,21 +287,20 @@ echo $gross->round(2); // 76.16
 ```
 
 > [!NOTE]
-> Support for scientific notation will be added in the future,
-> see: [php/php-src#18068](https://github.com/php/php-src/pull/18068).
+> Scientific notation is not supported yet. See [php/php-src#18068](https://github.com/php/php-src/pull/18068).
 
-Two types of behavior worth noting:
+Two behaviors are worth noting:
 
 1. **Scale value:** Unlike the procedural functions, [the class ignores the `bcmath.scale` INI
-   directive:](https://www.php.net/manual/en/bc.configuration.php#ini.bcmath.scale) this value is automatically computed
-   and set, unless the `scale` parameter was set in the calculation method.
-2. **Identity comparison:** The comparison operators are overloaded, but the [identity comparison (
-   `===`)](https://www.php.net/manual/en/language.oop5.object-comparison.php) works the same way as it does for any
-   other object, so it will return `false` for two distinct `Number` instances holding the same value.
-   For mathematical value equality, use the `==` operator, or better yet, [the spaceship operator (
-   `<=>`)](https://www.php.net/manual/en/migration70.new-features.php#migration70.new-features.spaceship-op), which
-   uses the `compare()` method, while the `__toString()` method should be used if you specifically need an exact
-   string-based comparison (which takes the scale into account):
+   directive](https://www.php.net/manual/en/bc.configuration.php#ini.bcmath.scale). It computes the scale itself,
+   unless you pass the `scale` parameter to the calculation methods.
+2. **Identity comparison:** The comparison operators are overloaded, but the
+   [identity comparison (`===`)](https://www.php.net/manual/en/language.oop5.object-comparison.php) works as it does for
+   any other object. It returns `false` for two distinct `Number` instances that hold the same value. For value equality,
+   use the `==` operator, or better yet,
+   [the spaceship operator (`<=>`)](https://www.php.net/manual/en/migration70.new-features.php#migration70.new-features.spaceship-op),
+   which calls the `compare()` method. If you need an exact string comparison that also takes the scale into account,
+   compare the results of `__toString()`:
 
 ```php
 use BcMath\Number;
@@ -349,11 +342,10 @@ The RFC author also published a **polyfill**:
 composer require saki/bcmath-number-polyfill
 ```
 
-It backports the class to PHP 8.2 and 8.3 (the BCMath extension is still required), and it deliberately does not define
-the class if a native `BcMath\Number` already exists, so it's safe to keep in `composer.json` across an upgrade. The one
-thing it **cannot** provide is operator overloading (that's an engine feature, as mentioned before) so polyfilled code
-has to use method chaining (`->add(...)->mul(...)`). Which is a decent argument for writing method calls rather than
-operators in library code that has to support multiple PHP versions.
+It backports the class to PHP 8.2 and 8.3 (the BCMath extension is still required). It does not define the class if a
+native `BcMath\Number` already exists, so you can keep it in `composer.json` across an upgrade. The one thing it
+**cannot** provide is operator overloading, because that is an engine feature. Polyfilled code has to use method
+chaining (`->add(...)->mul(...)`).
 
 > [!TIP]
 > Once you've switched to `Number`, make sure no `float` sneaks back in. The
@@ -361,14 +353,14 @@ operators in library code that has to support multiple PHP versions.
 > return types and assignments, and with `disallowFloatsEverywhere: true` it reports every expression that produces a
 > `float`.
 
-## Part 3: The Database Layer
+## Part 3: The database layer
 
-I will focus only on MySQL as a database in this part, since I work with it daily.
+This part covers only MySQL, because that is the database I work with daily.
 
 ### `DECIMAL` is fixed-point, `FLOAT` and `DOUBLE` are not
 
-In this regard, MySQL works similar as PHP: `FLOAT` and `DOUBLE` are approximate binary types with exactly the same
-rounding characteristics as PHP's `float` - because they are the same **IEEE 754 representation**, see:
+MySQL works like PHP here. `FLOAT` and `DOUBLE` are approximate binary types with the same rounding behavior as PHP's
+`float`, because they use the same **IEEE 754 representation**:
 
 > Floating-point numbers sometimes cause confusion because they are approximate and not stored as exact values.
 > A floating-point value as written in an SQL statement may not be the same as the value represented internally.
@@ -379,9 +371,9 @@ rounding characteristics as PHP's `float` - because they are the same **IEEE 754
 > \- [Problems with Floating-Point Values, MySQL Reference Manual](https://dev.mysql.com/doc/refman/9.7/en/problems-with-float.html)
 
 [MySQL's `DECIMAL` (and its synonym `NUMERIC`)](https://dev.mysql.com/doc/refman/9.7/en/fixed-point-types.html) uses
-**fixed-point** storage: the digits are stored exactly, for example `DECIMAL(5,2)` means `5` is the precision and `2`
-is the scale. The precision represents the number of significant digits that are stored for values, and the scale
-represents the number of digits that can be stored following the decimal point.
+**fixed-point** storage, so the digits are stored exactly. In `DECIMAL(5,2)`, `5` is the precision and `2` is the
+scale. The precision is the number of significant digits stored, and the scale is the number of digits after the
+decimal point.
 
 ```sql
 CREATE TABLE `employee`
@@ -392,7 +384,7 @@ CREATE TABLE `employee`
 );
 ```
 
-Of course, the MySQL documentation provides us a comprehensive specification about this type:
+The MySQL documentation specifies the limits:
 
 > The declaration syntax for a `DECIMAL` column is `DECIMAL(M,D)`.
 > The ranges of values for the arguments are as follows:
@@ -439,8 +431,8 @@ final class Book
 }
 ```
 
-As you see, the column is `decimal`, and the class property is `float`. Doctrine will happily boot, map the entity,
-insert rows, and read them back. Nothing warns you at runtime.
+The column is `decimal`, and the class property is `float`. Doctrine boots, maps the entity, inserts rows, and reads
+them back. Nothing warns you at runtime.
 
 Now persist a `Book`, clear the `EntityManager`, `find()` it again, and `flush()` without touching anything. Doctrine
 issues an `UPDATE` statement, because when you `flush()`, the
@@ -469,13 +461,12 @@ public function computeChangeSet(ClassMetadata $class, object $entity): void
 }
 ```
 
-Here's what is actually happening during the hydration phase: Doctrine passes the string `'5.00'` to the entity's class
-property from the `decimal` type, and the typed class property coerces it to the float `5.0`. However, the snapshot
-still store the original string value. So the expression `'5.00' === 5.0` will be `false`, which means that every
-`flush()` produces an `UPDATE` statement for an unchanged row.
+Here is what happens during hydration: the `decimal` type gives Doctrine the string `'5.00'`, and Doctrine assigns it
+to the property. The `float` type hint coerces it to `5.0`, but the snapshot still stores the original string. The
+expression `'5.00' === 5.0` is `false`, so every `flush()` sends an `UPDATE` statement for an unchanged row.
 
-This unnecessary, redundant `UPDATE` statement can cause: unnecessary write locks, elevated deadlock risk, and a
-database working harder (and costing more) than it needs to.
+These redundant `UPDATE` statements take write locks you don't need, raise the risk of deadlocks, and make the
+database work harder (and cost more) than it has to.
 
 The same behaviour has been reported repeatedly, e.g.
 in [doctrine/orm#8867 - "Field with type float and orm type decimal is wrongly detected as changed on update"](https://github.com/doctrine/orm/issues/8867).
@@ -496,8 +487,8 @@ Mapping
    from the metadata field type 'string' returned by the 'decimal' DBAL type.
 ```
 
-The best thing to do is put this `doctrine:schema:validate` command in your CI workflow. It is the cheapest possible
-guard against this class of bug.
+> [!TIP]
+> Run `doctrine:schema:validate` in your CI workflow. It is the cheapest guard against this class of bug.
 
 There are three ways to resolve the mismatch:
 
@@ -517,8 +508,8 @@ strings, in your domain model, in 2026!
 
 ### DBAL 4.3: the `number` type
 
-This is the gap that [doctrine/dbal#6686](https://github.com/doctrine/dbal/pull/6686) closes - the implementation of the
-feature request in [doctrine/dbal#6644](https://github.com/doctrine/dbal/issues/6644). Since **DBAL 4.3**, there is a [
+[doctrine/dbal#6686](https://github.com/doctrine/dbal/pull/6686) closes this gap. It implements the feature request in
+[doctrine/dbal#6644](https://github.com/doctrine/dbal/issues/6644). Since **DBAL 4.3**, there is a [
 `number` type](https://www.doctrine-project.org/projects/doctrine-dbal/en/current/reference/types.html#number):
 
 > Maps and converts numeric data with fixed-point precision. This type behaves like `decimal`, but maps to
@@ -569,9 +560,9 @@ so the schema validator stays quiet.
 
 ### A note on Doctrine's changeset computation
 
-Because `BcMath\Number` is an **immutable Value Object**, it avoids the classic mutation pitfalls of standard `DateTime`
-objects, where modifying internal state directly skips Doctrine's
-[reference-based tracking](https://www.doctrine-project.org/projects/doctrine-orm/en/current/cookbook/working-with-datetime.html#datetime-changes-are-detected-by-reference).
+`BcMath\Number` is an **immutable Value Object**, so it avoids the classic mutation trap of `DateTime`. When you modify
+a `DateTime` in place, the change slips past Doctrine's
+[reference-based tracking](https://www.doctrine-project.org/projects/doctrine-orm/en/current/cookbook/working-with-datetime.html#datetime-changes-are-detected-by-reference):
 
 ```php
 $orgValue = new \DateTime();
@@ -581,16 +572,16 @@ $actualValue->modify('+1 day');
 var_dump($orgValue === $actualValue); // true
 ```
 
-However, immutability introduces a subtle changeset computation quirk, as pointed out in a discussion on
-[doctrine/orm#11781](https://github.com/doctrine/orm/pull/11781) (this is consistent with the long-standing behavior
-of `DateTime`, as reported in [doctrine/orm#7583](https://github.com/doctrine/orm/issues/7583)):
+Immutability brings its own changeset quirk, as a discussion on
+[doctrine/orm#11781](https://github.com/doctrine/orm/pull/11781) points out. `DateTime` has behaved the same way for
+years, as reported in [doctrine/orm#7583](https://github.com/doctrine/orm/issues/7583):
 
 > We kind of have the same problem here as we already do with `DateTime` objects. If you don't modify a property that
 > stores a number, it's fine. But if you set that property to a new number object, it will be detected as changed even
 > if the new number object is equal to the old one.
 
-The change detection for object types is [a known rough edge](https://github.com/doctrine/orm/issues/11910), caused by
-the **identity operator**. To prevent redundant database writes, check whether the new `BcMath\Number` value actually
+Change detection for object types is [a known weak spot](https://github.com/doctrine/orm/issues/11910), because it
+uses the **identity operator**. To prevent redundant database writes, check whether the new `BcMath\Number` value
 differs from the current value before assigning it.
 
 ```php
@@ -605,23 +596,23 @@ public function changeNetAmount(Number $netAmount): void
 }
 ```
 
-## Part 4: The Presentation Layer
+## Part 4: The presentation layer
 
 You have an exact `BcMath\Number` in your domain and an exact `DECIMAL` column in your database. Now you have to show
-`76.16` to a Hungarian user as `76,16 Ft` and to an American one as `$76.16`.
+`76.16` to a European user as `76,16 €` and to an American one as `$76.16`.
 
-The `BcMath\Number` has no `format()` method of its own. An early draft of the RFC had one, but it was removed
-in [the follow-up "Fix up BCMath Number Class" RFC](https://wiki.php.net/rfc/fix_up_bcmath_number_class) before PHP 8.4
-shipped - partly because it only handled a limited set of notation conventions.
+`BcMath\Number` has no `format()` method of its own. An early draft of the RFC had one, but
+[the follow-up "Fix up BCMath Number Class" RFC](https://wiki.php.net/rfc/fix_up_bcmath_number_class) removed it before
+PHP 8.4 shipped. One reason was that it handled only a limited set of notation conventions.
 
-### The `money_format()` is gone
+### `money_format()` is gone
 
 The `money_format()` function
 was [deprecated in 7.4 and removed in PHP 8.0](https://www.php.net/manual/en/function.money-format.php).
-It was never a good tool anyway - it depended on the C level locale set by `setlocale()`, which is process-wide and not
+It was never a good tool anyway. It depended on the C-level locale set by `setlocale()`, which is process-wide and not
 thread-safe.
 
-### The `NumberFormatter` class
+### Use `NumberFormatter` instead
 
 The replacement is [`NumberFormatter`](https://www.php.net/manual/en/class.numberformatter.php) from the `intl`
 extension:
@@ -642,24 +633,24 @@ $ja = new \NumberFormatter('ja_JP', \NumberFormatter::CURRENCY);
 echo $ja->formatCurrency(7616, 'JPY'); // ￥7,616
 ```
 
-`NumberFormatter` is a thin wrapper over the [ICU](https://icu.unicode.org/) library, which is why it knows all of this.
+`NumberFormatter` is a thin wrapper over the [ICU](https://icu.unicode.org/) library, and ICU holds all of these rules.
 There's a good practical introduction in [this article on using
 `NumberFormatter` for localization and formatting](https://bmehul.com/articles/using-phps-numberformatter-for-localization-and-formatting).
 
-Note how much the locale is doing: decimal separator, group separator, symbol, symbol position, spacing, and the number
-of fraction digits. **Always set the locale explicitly** rather than relying on the default. The default comes from the
-ICU environment and will differ between your laptop, CI, and production.
+The locale decides the decimal separator, the group separator, the symbol and its position, the spacing, and the number
+of fraction digits. **Always set the locale explicitly.** The default comes from the ICU environment and differs
+between your localhost, CI, and production.
 
-### The float boundary, and how to survive it
+### Cross the float boundary only after rounding
 
-Here is the wrinkle nobody mentions: `formatCurrency()` accepts a `float`.
+Here is the catch nobody mentions: `formatCurrency()` accepts a `float`.
 
 ```php
 public function formatCurrency(float $amount, string $currency): string|false
 ```
 
-So there is a `float` type in your pipeline after all, right at the very end. That is acceptable, but only if you handle
-it deliberately:
+So there is a `float` in your pipeline after all, right at the end. That is acceptable, but only if you handle it
+deliberately:
 
 ```php
 use BcMath\Number;
@@ -678,26 +669,24 @@ function format_number(Number $amount, string $currency, string $locale): string
 echo format_number(new Number('76.1619'), 'HUF', 'hu_HU'); // 76,16 Ft
 ```
 
-The rounding decision (the one place where money is actually created or destroyed) happens in exact decimal arithmetic
-with an explicit rounding mode. The float conversion happens afterward, on a value with two decimal places, purely to
-satisfy a signature. Floats represent that exactly enough for display.
+Rounding is the one place where money is created or destroyed, so it happens in exact decimal arithmetic with an
+explicit rounding mode. The float conversion comes afterward, on a value with two decimal places, only to satisfy the
+signature. A float is close enough to that value for display.
 
 > [!NOTE]
 > Rule of thumb: never round in float, and never let a float value flow backwards into your domain or your database.
 > Formatting is a one-way door.
 
-### PHP 8.5: compact notation, finally exposed
+### PHP 8.5 exposes compact notation
 
-For dashboards and analytics you often want `1.2K` rather than `1,200`.
-[JavaScript has
-`Intl.NumberFormat`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/NumberFormat/NumberFormat)
-with
-`notation: 'compact'` for years, PHP's `NumberFormatter` appeared not to.
+For dashboards and analytics, you often want `1.2K` rather than `1,200`. JavaScript has had
+[`Intl.NumberFormat`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/NumberFormat/NumberFormat)
+with `notation: 'compact'` for years. PHP's `NumberFormatter` appeared not to support it.
 
 As [Bogdan Ungureanu discovered](https://ungureanu.blog/2025/04/15/locale-aware-compact-number-formatting-in-php-with-numberformatter/),
-ICU supported it all along and PHP simply never exposed the constants - passing the "magic" integer `14` worked as far
-back as PHP 5. He opened [php/php-src#17975](https://github.com/php/php-src/pull/17975), it was merged, and **PHP 8.5**
-exposes two new constants now:
+ICU supported it all along, and PHP never exposed the constants. Passing the "magic" integer `14` worked as far back as
+PHP 5. He opened [php/php-src#17975](https://github.com/php/php-src/pull/17975), it was merged, and **PHP 8.5** now
+exposes two new constants:
 
 ```php
 // PHP 8.5+
@@ -708,11 +697,11 @@ $long = new \NumberFormatter('en_US', \NumberFormatter::DECIMAL_COMPACT_LONG);
 echo $long->format(1200); // 1.2 thousand
 ```
 
-## Part 5: Symfony Integrations
+## Part 5: Symfony integrations
 
-### Symfony Form Type
+### Write your own form type
 
-Symfony has no Form Type for `BcMath\Number`... yet. The obvious workaround is to put a `CallbackTransformer` on a
+Symfony has no form type for `BcMath\Number`... yet. The obvious workaround is to put a `CallbackTransformer` on a
 `NumberType` field, but [symfony/symfony#64562](https://github.com/symfony/symfony/issues/64562) shows why that is not
 enough:
 
@@ -722,7 +711,7 @@ enough:
   transformer runs.
 - The [`MoneyType`](https://symfony.com/doc/current/reference/forms/types/money.html) has
   [the same problem](https://github.com/symfony/symfony/blob/8.1/src/Symfony/Component/Form/Extension/Core/Type/MoneyType.php#L32-L45),
-  because its transformer extends the same `float` based one.
+  because its transformer extends the same `float`-based one.
 
 The issue was closed by adding `BcMath\Number` support to the Validator component, not to the Form component. So for now
 you need your own type. It must not extend `NumberType`, and it must convert directly between `string` and `Number`,
@@ -827,35 +816,35 @@ final class BcMathNumberType extends AbstractType
 
 ### Native `BcMath\Number` support across Symfony components
 
-- [Symfony 7.3 Serializer Improvements](https://symfony.com/blog/new-in-symfony-7-3-serializer-improvements):
-  **Serializer Component** introduced a dedicated `NumberNormalizer` to seamlessly convert `BcMath\Number` (and `GMP`)
-  objects to and from their string or integer representations.
-- [A Week of Symfony #1017](https://symfony.com/blog/a-week-of-symfony-1017-june-22-28-2026): **JsonStreamer Component**
-  added native support for handling `BcMath\Number` and `GMP` value objects during high-performance, low-memory JSON
-  streaming.
-- [A Week of Symfony #1025](https://symfony.com/blog/a-week-of-symfony-1025-august-17-23-2026): **Validator Component**
-  added direct `BcMath\Number` support across comparison constraints (such as `EqualTo`, `GreaterThan`, etc.) as well as
-  `Range` constraints.
+Three components already accept `BcMath\Number`:
+
+- [Symfony 7.3 Serializer Improvements](https://symfony.com/blog/new-in-symfony-7-3-serializer-improvements): The
+  **Serializer component** added a `NumberNormalizer` that converts `BcMath\Number` and `GMP` objects to and from
+  strings or integers.
+- [A Week of Symfony #1017](https://symfony.com/blog/a-week-of-symfony-1017-june-22-28-2026): The **JsonStreamer
+  component** added support for `BcMath\Number` and `GMP` objects.
+- [A Week of Symfony #1025](https://symfony.com/blog/a-week-of-symfony-1025-august-17-23-2026): The **Validator
+  component** accepts `BcMath\Number` in comparison constraints, such as `EqualTo` and `GreaterThan`, and in the `Range`
+  constraint.
 
 ### Currencies: the other half of money
 
 An exact amount is only half of a price: it also needs a currency. Symfony has long shipped tools for that half, too:
 
-- **Intl Component:**
-    - [Symfony 4.3 introduced](https://symfony.com/blog/new-in-symfony-4-3-simpler-access-to-intl-data) **the
-      [Currencies](https://symfony.com/doc/current/components/intl.html#currencies) class** that can handle standardized
-      [3-letter ISO 4217 codes](https://en.wikipedia.org/wiki/ISO_4217) seamlessly. Although PHP has a built-in
-      [`ResourceBundle`](https://www.php.net/manual/en/class.resourcebundle.php) with direct access to ICU's data
-      bundles via the `intl` extension, and Symfony use the same ICU data, but encapsulate it in an expressive,
-      well-designed OOP API.
-    - [As announced in the Symfony blog](https://symfony.com/blog/new-in-symfony-7-4-better-currency-filtering), Symfony
-      7.4 filters legacy currencies out by default and adds ICU-backed methods for querying legal-tender status and
-      validity dates.
-- **Form Component:**
-    - **[Currency Type](https://symfony.com/doc/current/reference/forms/types/currency.html):** For selecting
+- **Intl component:**
+    - [Symfony 4.3 introduced](https://symfony.com/blog/new-in-symfony-4-3-simpler-access-to-intl-data) the
+      [`Currencies`](https://symfony.com/doc/current/components/intl.html#currencies) class for
+      [3-letter ISO 4217 codes](https://en.wikipedia.org/wiki/ISO_4217). PHP's
+      [`ResourceBundle`](https://www.php.net/manual/en/class.resourcebundle.php) in the `intl` extension reads the same
+      ICU data, but `Currencies` wraps it in static methods such as `getName()` and `getFractionDigits()`.
+    - [As announced on the Symfony blog](https://symfony.com/blog/new-in-symfony-7-4-better-currency-filtering), Symfony
+      7.4 filters out legacy currencies by default. It also adds ICU-backed methods that tell you whether a currency is
+      legal tender and when it is valid.
+- **Form component:**
+    - **[`CurrencyType`](https://symfony.com/doc/current/reference/forms/types/currency.html):** A choice field for
       currencies.
-    - **[Money Type](https://symfony.com/doc/current/reference/forms/types/money.html):** Specialized for inputting
-      monetary values.
-- **Validator Component:** The
-  **[Currency Constraint](https://symfony.com/doc/current/reference/constraints/Currency.html)** ensures valid ISO
-  codes.
+    - **[`MoneyType`](https://symfony.com/doc/current/reference/forms/types/money.html):** An input for amounts. As
+      shown above, it converts the value to a `float`.
+- **Validator component:** The
+  **[`Currency` constraint](https://symfony.com/doc/current/reference/constraints/Currency.html)** checks that a value is
+  a valid ISO 4217 code.
